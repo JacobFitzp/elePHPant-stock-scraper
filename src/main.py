@@ -1,9 +1,8 @@
 import configparser
-import json
-import os.path
 import smtplib
 import ssl
 
+from libs.JStore import JStore
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -26,13 +25,10 @@ driver_service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=driver_service, options=driver_options)
 driver.implicitly_wait(30)
 
-# Get Previous Results
-if os.path.exists("../cache.json"):
-    with open('../cache.json', 'r') as openfile:
-        json_object = json.load(openfile)
-        previouslyInStock = json_object['inStock']
-else:
-    previouslyInStock = False
+# FileCache
+cache = JStore('../cache.json')
+
+previously_in_stock = cache.get_bool('in_stock')
 
 print("-----------------------")
 print("elePHPant-stock-scraper")
@@ -46,13 +42,13 @@ driver.get(config['DEFAULT']['PRODUCT'])
 try:
     print(" > No Stock Found")
     driver.find_element(By.CSS_SELECTOR, '.stock.out-of-stock')
-    inStock = False
+    in_stock = False
 except():
     print(" > Stock Found")
-    inStock = True
+    in_stock = True
 
 # In-stock Email Message
-inStockMessage = """\
+in_stock_message = """\
 Subject: elePHPant In-Stock!
 
 elePHPant stock scraper has detected available stock!
@@ -61,7 +57,7 @@ Product URL: {}
 """.format(config['DEFAULT']['PRODUCT'])
 
 # Out-of-stock Email Message
-outOfStockMessage = """\
+out_of_stock_message = """\
 Subject: elePHPant Out-Of-Stock!
 
 elePHPant stock scraper has detected that all available stock has sold out.
@@ -69,39 +65,25 @@ elePHPant stock scraper has detected that all available stock has sold out.
 Product URL: {}
 """.format(config['DEFAULT']['PRODUCT'])
 
+send_in_stock_email = in_stock and not previously_in_stock
+send_out_of_stock_email = not in_stock and previously_in_stock
+
 # Send email if in-stock
-if inStock and not previouslyInStock:
+if send_in_stock_email or send_out_of_stock_email:
     print("> Sending Email")
 
     context = ssl.create_default_context()
+    email_message = in_stock_message
+
+    if send_out_of_stock_email:
+        email_message = out_of_stock_message
 
     with smtplib.SMTP_SSL(config['SMTP']['HOST'], config['SMTP']['PORT'], context=context) as server:
         server.login(config['SMTP']['USERNAME'], config['SMTP']['PASSWORD'])
-        server.sendmail(config['SMTP']['USERNAME'], config['DEFAULT']['RECIPIENT'], inStockMessage)
+        server.sendmail(config['SMTP']['USERNAME'], config['DEFAULT']['RECIPIENT'], email_message)
 
-        print(" > Email Sent [In-Stock]")
+        print(" > Email Sent")
 
-if not inStock and previouslyInStock:
-    print("> Sending Email")
-
-    context = ssl.create_default_context()
-
-    with smtplib.SMTP_SSL(config['SMTP']['HOST'], config['SMTP']['PORT'], context=context) as server:
-        server.login(config['SMTP']['USERNAME'], config['SMTP']['PASSWORD'])
-        server.sendmail(config['SMTP']['USERNAME'], config['DEFAULT']['RECIPIENT'], outOfStockMessage)
-
-        print(" > Email Sent [Out-Of-Stock]")
-
-print("> Caching Results")
-# Write results to disk
-results = {
-    "inStock": inStock
-}
-
-jsonData = json.dumps(results, indent=4)
-
-with open("../cache.json", "w") as outfile:
-    outfile.write(jsonData)
-    print(" > Results Cached")
+cache.set('in_stock', in_stock)
 
 print("> Finished")
